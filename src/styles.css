@@ -173,6 +173,15 @@ p {
   line-height: 1.8;
 }
 
+.workspace-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .primary-button {
   display: inline-flex;
   flex: 0 0 auto;
@@ -195,6 +204,23 @@ p {
 .primary-button:hover {
   background: var(--forest-dark);
   transform: translateY(-1px);
+}
+
+.outline-button {
+  min-height: 43px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  background: rgba(251, 248, 240, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.outline-button:hover {
+  border-color: var(--forest);
+  color: var(--forest);
 }
 
 .primary-button svg,
@@ -229,6 +255,23 @@ p {
   border: 1px solid rgba(168, 63, 49, 0.22);
   color: #7f3026;
   background: #f7e8e2;
+}
+
+.notice-success {
+  border: 1px solid rgba(49, 102, 74, 0.22);
+  color: #295940;
+  background: #e8f1e9;
+}
+
+.backup-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .trip-grid {
@@ -1234,6 +1277,11 @@ footer {
     margin-bottom: 32px;
   }
 
+  .workspace-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .trip-grid {
     grid-template-columns: 1fr;
   }
@@ -1321,6 +1369,19 @@ footer {
   .primary-button {
     width: 100%;
     justify-content: center;
+  }
+
+  .workspace-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-actions .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .outline-button {
+    width: 100%;
   }
 
   .empty-library {

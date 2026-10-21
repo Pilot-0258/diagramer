@@ -1,5 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { ZodError } from 'zod'
+import {
+  createBackupBundle,
+  importBackupText,
+  type BackupBundle,
+} from './domain/backup'
 import {
   TRAVEL_MODE_LABELS,
   createActivityItem,
@@ -122,6 +127,25 @@ function describeError(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
 }
 
+function downloadBackup(bundle: BackupBundle, filename: string) {
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function safeFilenamePart(value: string) {
+  return value.replace(/[\\/:*?"<>|]+/g, '-').trim() || '行程'
+}
+
 function buildPlace(
   name: string | undefined,
   address: string | undefined,
@@ -228,18 +252,26 @@ function LibraryView({
   data,
   storageError,
   actionError,
+  actionMessage,
   onCreate,
+  onImport,
+  onExportAll,
   onOpenTrip,
   onDismissStorageError,
   onDismissActionError,
+  onDismissActionMessage,
 }: {
   data: AppData
   storageError: string | null
   actionError: string | null
+  actionMessage: string | null
   onCreate: () => void
+  onImport: () => void
+  onExportAll: () => void
   onOpenTrip: (tripId: string) => void
   onDismissStorageError: () => void
   onDismissActionError: () => void
+  onDismissActionMessage: () => void
 }) {
   const trips = sortTripsForDisplay(data.trips)
 
@@ -253,10 +285,24 @@ function LibraryView({
             先把日期和目的地定下来，下一步再逐项安排活动与交通。
           </p>
         </div>
-        <button className="primary-button" onClick={onCreate} type="button">
-          <PlusIcon />
-          新建行程
-        </button>
+        <div className="workspace-actions">
+          <button className="outline-button" onClick={onImport} type="button">
+            导入 JSON
+          </button>
+          {trips.length > 0 ? (
+            <button
+              className="outline-button"
+              onClick={onExportAll}
+              type="button"
+            >
+              导出全部
+            </button>
+          ) : null}
+          <button className="primary-button" onClick={onCreate} type="button">
+            <PlusIcon />
+            新建行程
+          </button>
+        </div>
       </div>
 
       {storageError ? (
@@ -278,6 +324,19 @@ function LibraryView({
           <button
             aria-label="关闭提示"
             onClick={onDismissActionError}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {actionMessage ? (
+        <div className="notice notice-success" role="status">
+          <span>{actionMessage}</span>
+          <button
+            aria-label="关闭提示"
+            onClick={onDismissActionMessage}
             type="button"
           >
             ×
@@ -382,24 +441,30 @@ function DetailView({
   trip,
   onBack,
   onEdit,
+  onExport,
   onDuplicate,
   onDelete,
   onAddItem,
   onEditItem,
   onDeleteItem,
   actionError,
+  actionMessage,
   onDismissActionError,
+  onDismissActionMessage,
 }: {
   trip: Trip
   onBack: () => void
   onEdit: () => void
+  onExport: () => void
   onDuplicate: () => void
   onDelete: () => void
   onAddItem: () => void
   onEditItem: (item: ScheduleItem) => void
   onDeleteItem: (item: ScheduleItem) => void
   actionError: string | null
+  actionMessage: string | null
   onDismissActionError: () => void
+  onDismissActionMessage: () => void
 }) {
   const dates = listTripDates(trip)
   const overlappingIds = findOverlappingScheduleItemIds(trip)
@@ -424,6 +489,19 @@ function DetailView({
         </div>
       ) : null}
 
+      {actionMessage ? (
+        <div className="notice notice-success" role="status">
+          <span>{actionMessage}</span>
+          <button
+            aria-label="关闭提示"
+            onClick={onDismissActionMessage}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
       <header className="detail-hero">
         <div className="detail-title-block">
           <p className="eyebrow">TRIP OVERVIEW · {trip.destination || '目的地待定'}</p>
@@ -433,6 +511,13 @@ function DetailView({
         <div className="detail-actions">
           <button className="secondary-button" onClick={onEdit} type="button">
             编辑信息
+          </button>
+          <button
+            className="icon-text-button"
+            onClick={onExport}
+            type="button"
+          >
+            导出 JSON
           </button>
           <button
             className="icon-text-button"
@@ -582,6 +667,8 @@ function App() {
   const [scheduleEditor, setScheduleEditor] =
     useState<ScheduleEditorState>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const backupInputRef = useRef<HTMLInputElement>(null)
 
   const selectedTrip = useMemo(
     () =>
@@ -614,6 +701,7 @@ function App() {
       setEditor(null)
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
       return { ok: true }
     } catch (error) {
       return { ok: false, message: describeError(error) }
@@ -635,6 +723,7 @@ function App() {
       setEditor(null)
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
       return { ok: true }
     } catch (error) {
       return { ok: false, message: describeError(error) }
@@ -657,6 +746,7 @@ function App() {
       setSelectedTripId(result.trip.id)
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
     } catch (error) {
       setActionError(describeError(error))
     }
@@ -686,6 +776,7 @@ function App() {
       setSelectedTripId(null)
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
     } catch (error) {
       setActionError(describeError(error))
     }
@@ -706,6 +797,7 @@ function App() {
 
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
       return { ok: true }
     } catch (error) {
       return { ok: false, message: describeError(error) }
@@ -727,6 +819,7 @@ function App() {
 
       setScheduleEditor(null)
       setActionError(null)
+      setActionMessage(null)
       return { ok: true }
     } catch (error) {
       return { ok: false, message: describeError(error) }
@@ -759,8 +852,77 @@ function App() {
       }
 
       setActionError(null)
+      setActionMessage(null)
     } catch (error) {
       setActionError(describeError(error))
+    }
+  }
+
+  const handleExport = (trips: Trip[], label: string) => {
+    if (trips.length === 0) {
+      setActionError('没有可导出的行程')
+      return
+    }
+
+    try {
+      const bundle = createBackupBundle(trips)
+      const exportedDate = new Date().toISOString().slice(0, 10)
+      downloadBackup(
+        bundle,
+        `行程图-${safeFilenamePart(label)}-${exportedDate}.json`,
+      )
+      setActionError(null)
+      setActionMessage(`已生成 ${trips.length} 个行程的 JSON 备份`)
+    } catch (error) {
+      setActionMessage(null)
+      setActionError(describeError(error))
+    }
+  }
+
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    input.value = ''
+
+    if (!file) {
+      return
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setActionMessage(null)
+      setActionError('备份文件不能超过 10 MB')
+      return
+    }
+
+    if (!data) {
+      setActionMessage(null)
+      setActionError('本机数据尚未准备好')
+      return
+    }
+
+    try {
+      const result = importBackupText(await file.text(), data)
+
+      if (!result.ok) {
+        setActionMessage(null)
+        setActionError(result.message)
+        return
+      }
+
+      if (!commit(result.data)) {
+        setActionMessage(null)
+        setActionError('浏览器存储写入失败，未能导入备份')
+        return
+      }
+
+      setActionError(null)
+      setActionMessage(
+        `已导入 ${result.importedTrips.length} 个行程副本，原行程未被覆盖`,
+      )
+      setSelectedTripId(null)
+    } catch {
+      setActionMessage(null)
+      setActionError('读取备份文件失败')
     }
   }
 
@@ -784,11 +946,20 @@ function App() {
         <span className="local-badge">仅保存在本机</span>
       </header>
 
+      <input
+        accept=".json,application/json"
+        className="backup-file-input"
+        onChange={handleImportFile}
+        ref={backupInputRef}
+        type="file"
+      />
+
       {!data ? (
         <StorageUnavailable message={storageError ?? '本机存储格式异常'} />
       ) : selectedTrip ? (
         <DetailView
           actionError={actionError}
+          actionMessage={actionMessage}
           onAddItem={() => {
             setActionError(null)
             setEditor(null)
@@ -801,6 +972,7 @@ function App() {
           onDelete={handleDelete}
           onDeleteItem={handleDeleteSchedule}
           onDismissActionError={() => setActionError(null)}
+          onDismissActionMessage={() => setActionMessage(null)}
           onDuplicate={handleDuplicate}
           onEdit={() => {
             setScheduleEditor(null)
@@ -811,21 +983,28 @@ function App() {
             setEditor(null)
             setScheduleEditor({ itemId: item.id })
           }}
+          onExport={() => handleExport([selectedTrip], selectedTrip.title)}
           trip={selectedTrip}
         />
       ) : (
         <LibraryView
           actionError={actionError}
+          actionMessage={actionMessage}
           data={data}
           onDismissActionError={() => setActionError(null)}
+          onDismissActionMessage={() => setActionMessage(null)}
           onDismissStorageError={dismissStorageError}
+          onExportAll={() => handleExport(data.trips, '全部')}
+          onImport={() => backupInputRef.current?.click()}
           onCreate={() => {
             setActionError(null)
+            setActionMessage(null)
             setScheduleEditor(null)
             setEditor('create')
           }}
           onOpenTrip={(tripId) => {
             setActionError(null)
+            setActionMessage(null)
             setScheduleEditor(null)
             setSelectedTripId(tripId)
           }}
