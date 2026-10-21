@@ -1,3 +1,5 @@
+import { TripRepository } from './storage/tripRepository'
+
 const ArrowIcon = () => (
   <svg
     aria-hidden="true"
@@ -16,7 +18,25 @@ const PinIcon = () => (
   </svg>
 )
 
+function getStorageStatus() {
+  try {
+    const result = new TripRepository(window.localStorage).load()
+
+    if (!result.ok) {
+      return '本地数据需要检查'
+    }
+
+    return result.value.trips.length === 0
+      ? '本地存储已就绪'
+      : `本机已保存 ${result.value.trips.length} 个行程`
+  } catch {
+    return '浏览器存储不可用'
+  }
+}
+
 function App() {
+  const storageStatus = getStorageStatus()
+
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -103,8 +123,8 @@ function App() {
       </main>
 
       <footer>
-        <span>行程图 · V1 开发中</span>
-        <span>React + TypeScript</span>
+        <span>行程图 · V1 数据层</span>
+        <span data-testid="storage-status">{storageStatus}</span>
       </footer>
     </div>
   )
