@@ -900,7 +900,7 @@ function App() {
       const exportedDate = new Date().toISOString().slice(0, 10)
       downloadBackup(
         bundle,
-        `行程图-${safeFilenamePart(label)}-${exportedDate}.json`,
+        `排图者-diagramer-${safeFilenamePart(label)}-${exportedDate}.json`,
       )
       setActionError(null)
       setActionMessage(`已生成 ${trips.length} 个行程的 JSON 备份`)
@@ -1013,7 +1013,8 @@ function App() {
           <span className="brand-mark">
             <PinIcon />
           </span>
-          <span>行程图</span>
+          <span>排图者</span>
+          <span className="brand-english">diagramer</span>
         </button>
         <span className="local-badge">仅保存在本机</span>
       </header>
@@ -1100,7 +1101,7 @@ function App() {
 
       {data ? (
         <footer>
-          <span>行程图 · V1 时间表</span>
+          <span>排图者 diagramer · V1 时间表</span>
           <span data-testid="storage-status">
             已保存 {data.trips.length} 个行程
           </span>

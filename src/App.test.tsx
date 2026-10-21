@@ -14,7 +14,7 @@ import {
   TripRepository,
 } from './storage/tripRepository'
 
-describe('行程图界面', () => {
+describe('排图者 diagramer 界面', () => {
   beforeEach(() => {
     window.localStorage.clear()
   })

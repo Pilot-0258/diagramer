@@ -52,7 +52,7 @@ export function TimelineExportSheet({ trip }: { trip: Trip }) {
       <header className="export-sheet-header">
         <div className="export-brand">
           <span className="export-brand-mark">行</span>
-          <span>行程图 · ITINERARY</span>
+          <span>排图者 diagramer · ITINERARY</span>
         </div>
         <p className="export-destination">
           {trip.destination || '目的地待定'}
@@ -128,7 +128,7 @@ export function TimelineExportSheet({ trip }: { trip: Trip }) {
       </div>
 
       <footer className="export-footer">
-        <span>行程图 · 本地旅行时间表</span>
+        <span>排图者 diagramer · 本地旅行时间表</span>
         <span>时区 {trip.timezone}</span>
       </footer>
     </article>

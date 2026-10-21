@@ -21,12 +21,12 @@ if not exist "node_modules\" (
   )
 )
 
-echo 正在启动行程图……
+echo 正在启动排图者 diagramer……
 echo 浏览器地址：http://127.0.0.1:4173/
 call npm run local
 
 if errorlevel 1 (
-  echo [错误] 启动失败。若 4173 端口已被占用，请先关闭旧的行程图窗口或进程。
+  echo [错误] 启动失败。若 4173 端口已被占用，请先关闭旧的排图者窗口或进程。
   pause
 )
 
