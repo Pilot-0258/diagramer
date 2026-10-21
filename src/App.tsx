@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { toBlob } from 'html-to-image'
 import { ZodError } from 'zod'
 import {
   createBackupBundle,
@@ -34,6 +35,7 @@ import {
   type ScheduleItemDraft,
 } from './features/trips/ScheduleItemForm'
 import { TripForm } from './features/trips/TripForm'
+import { TimelineExportSheet } from './features/trips/TimelineExportSheet'
 import { useTripData } from './features/trips/useTripData'
 
 type SaveResult =
@@ -128,9 +130,15 @@ function describeError(error: unknown) {
 }
 
 function downloadBackup(bundle: BackupBundle, filename: string) {
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  })
+  downloadBlob(
+    new Blob([JSON.stringify(bundle, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    }),
+    filename,
+  )
+}
+
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
 
@@ -442,6 +450,8 @@ function DetailView({
   onBack,
   onEdit,
   onExport,
+  onExportImage,
+  onPrint,
   onDuplicate,
   onDelete,
   onAddItem,
@@ -449,6 +459,7 @@ function DetailView({
   onDeleteItem,
   actionError,
   actionMessage,
+  isExporting,
   onDismissActionError,
   onDismissActionMessage,
 }: {
@@ -456,6 +467,8 @@ function DetailView({
   onBack: () => void
   onEdit: () => void
   onExport: () => void
+  onExportImage: () => void
+  onPrint: () => void
   onDuplicate: () => void
   onDelete: () => void
   onAddItem: () => void
@@ -463,6 +476,7 @@ function DetailView({
   onDeleteItem: (item: ScheduleItem) => void
   actionError: string | null
   actionMessage: string | null
+  isExporting: boolean
   onDismissActionError: () => void
   onDismissActionMessage: () => void
 }) {
@@ -511,6 +525,21 @@ function DetailView({
         <div className="detail-actions">
           <button className="secondary-button" onClick={onEdit} type="button">
             编辑信息
+          </button>
+          <button
+            className="icon-text-button"
+            disabled={isExporting}
+            onClick={onExportImage}
+            type="button"
+          >
+            {isExporting ? '生成中…' : '导出图片'}
+          </button>
+          <button
+            className="icon-text-button"
+            onClick={onPrint}
+            type="button"
+          >
+            打印 / PDF
           </button>
           <button
             className="icon-text-button"
@@ -668,7 +697,9 @@ function App() {
     useState<ScheduleEditorState>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
   const backupInputRef = useRef<HTMLInputElement>(null)
+  const exportSheetRef = useRef<HTMLDivElement>(null)
 
   const selectedTrip = useMemo(
     () =>
@@ -879,6 +910,47 @@ function App() {
     }
   }
 
+  const handleExportImage = async () => {
+    if (!selectedTrip || !exportSheetRef.current) {
+      setActionError('找不到可导出的时间表')
+      return
+    }
+
+    setIsExporting(true)
+    setActionError(null)
+    setActionMessage(null)
+
+    try {
+      await document.fonts.ready
+      const blob = await toBlob(exportSheetRef.current, {
+        backgroundColor: '#fbf8f0',
+        cacheBust: true,
+        pixelRatio: 2,
+      })
+
+      if (!blob) {
+        throw new Error('图片生成结果为空')
+      }
+
+      const exportedDate = new Date().toISOString().slice(0, 10)
+      downloadBlob(
+        blob,
+        `${safeFilenamePart(selectedTrip.title)}-行程表-${exportedDate}.png`,
+      )
+      setActionMessage('已生成整趟行程的 PNG 图片')
+    } catch {
+      setActionError('生成图片失败，请重试')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  const handlePrint = () => {
+    setActionError(null)
+    setActionMessage(null)
+    window.print()
+  }
+
   const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget
     const file = input.files?.[0]
@@ -984,6 +1056,9 @@ function App() {
             setScheduleEditor({ itemId: item.id })
           }}
           onExport={() => handleExport([selectedTrip], selectedTrip.title)}
+          onExportImage={handleExportImage}
+          onPrint={handlePrint}
+          isExporting={isExporting}
           trip={selectedTrip}
         />
       ) : (
@@ -1011,6 +1086,17 @@ function App() {
           storageError={storageError}
         />
       )}
+
+      {selectedTrip ? (
+        <div
+          aria-hidden="true"
+          className="export-sheet-stage"
+        >
+          <div className="export-sheet-capture" ref={exportSheetRef}>
+            <TimelineExportSheet trip={selectedTrip} />
+          </div>
+        </div>
+      ) : null}
 
       {data ? (
         <footer>
