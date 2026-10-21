@@ -1,0 +1,50 @@
+# Dependencies and build output
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Generated artifacts and test screenshots
+artifacts/
+playwright-report/
+test-results/
+
+# Image, audio, and video assets never enter Git
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.ico
+*.svg
+*.avif
+*.heic
+*.mp3
+*.wav
+*.ogg
+*.m4a
+*.aac
+*.flac
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Generated exports
+*.pdf
+
+# Logs and editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
