@@ -1,131 +1,536 @@
-import { TripRepository } from './storage/tripRepository'
+import { useMemo, useState } from 'react'
+import { ZodError } from 'zod'
+import {
+  TRAVEL_MODE_LABELS,
+  type AppData,
+  type Trip,
+} from './domain/trip'
+import {
+  createTripInData,
+  duplicateTripInData,
+  findTrip,
+  removeTripFromData,
+  sortTripsForDisplay,
+  updateTripMetadataInData,
+  type TripMetadataInput,
+} from './domain/tripCollection'
+import { TripForm } from './features/trips/TripForm'
+import { useTripData } from './features/trips/useTripData'
+
+type SaveResult =
+  | {
+      ok: true
+    }
+  | {
+      ok: false
+      message: string
+    }
+
+type EditorState = 'create' | { tripId: string } | null
 
 const ArrowIcon = () => (
-  <svg
-    aria-hidden="true"
-    className="arrow-icon"
-    viewBox="0 0 20 20"
-    fill="none"
-  >
+  <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
     <path d="M4 10h11M11 5l5 5-5 5" />
   </svg>
 )
 
 const PinIcon = () => (
-  <svg aria-hidden="true" className="pin-icon" viewBox="0 0 24 24" fill="none">
+  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
     <path d="M12 21s6-5.2 6-11a6 6 0 1 0-12 0c0 5.8 6 11 6 11Z" />
     <circle cx="12" cy="10" r="2.25" />
   </svg>
 )
 
-function getStorageStatus() {
-  try {
-    const result = new TripRepository(window.localStorage).load()
+const PlusIcon = () => (
+  <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+    <path d="M10 4v12M4 10h12" />
+  </svg>
+)
 
-    if (!result.ok) {
-      return '本地数据需要检查'
-    }
+const CalendarIcon = () => (
+  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+    <path d="M6 3v3M18 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" />
+    <path d="M8 13h3M8 17h7" />
+  </svg>
+)
 
-    return result.value.trips.length === 0
-      ? '本地存储已就绪'
-      : `本机已保存 ${result.value.trips.length} 个行程`
-  } catch {
-    return '浏览器存储不可用'
+const RouteIcon = () => (
+  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+    <circle cx="6" cy="5" r="2.5" />
+    <circle cx="18" cy="19" r="2.5" />
+    <path d="M8.5 5H14a4 4 0 0 1 0 8h-4a4 4 0 0 0 0 8h5.5" />
+  </svg>
+)
+
+function formatDate(date: string) {
+  const [year, month, day] = date.split('-')
+  return `${year}.${month}.${day}`
+}
+
+function formatDateRange(trip: Trip) {
+  return trip.startDate === trip.endDate
+    ? formatDate(trip.startDate)
+    : `${formatDate(trip.startDate)} — ${formatDate(trip.endDate)}`
+}
+
+function countTripDays(trip: Trip) {
+  const start = Date.parse(`${trip.startDate}T00:00:00.000Z`)
+  const end = Date.parse(`${trip.endDate}T00:00:00.000Z`)
+  return Math.floor((end - start) / 86_400_000) + 1
+}
+
+function describeError(error: unknown) {
+  if (error instanceof ZodError) {
+    return error.issues[0]?.message ?? '行程数据格式不正确'
   }
+
+  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+}
+
+function TripCard({
+  trip,
+  onOpen,
+}: {
+  trip: Trip
+  onOpen: () => void
+}) {
+  return (
+    <button className="trip-card" onClick={onOpen} type="button">
+      <span className="trip-card-tape" />
+      <span className="trip-card-topline">
+        <span className="saved-label">
+          <span className="saved-dot" />
+          已保存
+        </span>
+        <span>{countTripDays(trip)} 天</span>
+      </span>
+      <span className="trip-card-title">{trip.title}</span>
+      <span className="trip-card-destination">
+        {trip.destination || '未填写目的地'}
+      </span>
+      <span className="trip-card-divider" />
+      <span className="trip-card-meta">
+        <span>{formatDateRange(trip)}</span>
+        <span>{trip.items.length} 项安排</span>
+      </span>
+      <span className="trip-card-link">
+        打开行程
+        <ArrowIcon />
+      </span>
+    </button>
+  )
+}
+
+function LibraryView({
+  data,
+  storageError,
+  actionError,
+  onCreate,
+  onOpenTrip,
+  onDismissStorageError,
+  onDismissActionError,
+}: {
+  data: AppData
+  storageError: string | null
+  actionError: string | null
+  onCreate: () => void
+  onOpenTrip: (tripId: string) => void
+  onDismissStorageError: () => void
+  onDismissActionError: () => void
+}) {
+  const trips = sortTripsForDisplay(data.trips)
+
+  return (
+    <section className="workspace" aria-labelledby="library-title">
+      <div className="workspace-heading">
+        <div>
+          <p className="eyebrow">YOUR TRIPS · 本机行程库</p>
+          <h1 id="library-title">我的行程</h1>
+          <p className="workspace-lead">
+            先把日期和目的地定下来，下一步再逐项安排活动与交通。
+          </p>
+        </div>
+        <button className="primary-button" onClick={onCreate} type="button">
+          <PlusIcon />
+          新建行程
+        </button>
+      </div>
+
+      {storageError ? (
+        <div className="notice notice-error" role="alert">
+          <span>{storageError}</span>
+          <button
+            aria-label="关闭提示"
+            onClick={onDismissStorageError}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="notice notice-error" role="alert">
+          <span>{actionError}</span>
+          <button
+            aria-label="关闭提示"
+            onClick={onDismissActionError}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {trips.length === 0 ? (
+        <div className="empty-library">
+          <div className="empty-illustration" aria-hidden="true">
+            <span className="empty-path" />
+            <span className="empty-pin empty-pin-start" />
+            <span className="empty-pin empty-pin-end" />
+            <span className="empty-date">01</span>
+          </div>
+          <div>
+            <p className="eyebrow">A NEW JOURNEY</p>
+            <h2>还没有安排行程</h2>
+            <p>
+              创建第一趟旅行，填写日期与目的地。行程会自动保存在当前浏览器中。
+            </p>
+            <button className="text-action" onClick={onCreate} type="button">
+              创建第一趟行程
+              <ArrowIcon />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="trip-grid">
+          {trips.map((trip) => (
+            <TripCard
+              key={trip.id}
+              onOpen={() => onOpenTrip(trip.id)}
+              trip={trip}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function DetailView({
+  trip,
+  onBack,
+  onEdit,
+  onDuplicate,
+  onDelete,
+  actionError,
+  onDismissActionError,
+}: {
+  trip: Trip
+  onBack: () => void
+  onEdit: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+  actionError: string | null
+  onDismissActionError: () => void
+}) {
+  return (
+    <section className="trip-detail" aria-labelledby="trip-title">
+      <button className="back-button" onClick={onBack} type="button">
+        <span aria-hidden="true">←</span>
+        返回全部行程
+      </button>
+
+      {actionError ? (
+        <div className="notice notice-error" role="alert">
+          <span>{actionError}</span>
+          <button
+            aria-label="关闭提示"
+            onClick={onDismissActionError}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      <header className="detail-hero">
+        <div className="detail-title-block">
+          <p className="eyebrow">TRIP OVERVIEW · {trip.destination || '目的地待定'}</p>
+          <h1 id="trip-title">{trip.title}</h1>
+          <p className="detail-dates">{formatDateRange(trip)}</p>
+        </div>
+        <div className="detail-actions">
+          <button className="secondary-button" onClick={onEdit} type="button">
+            编辑信息
+          </button>
+          <button
+            className="icon-text-button"
+            onClick={onDuplicate}
+            type="button"
+          >
+            复制
+          </button>
+          <button
+            className="icon-text-button danger-text"
+            onClick={onDelete}
+            type="button"
+          >
+            删除
+          </button>
+        </div>
+      </header>
+
+      <div className="detail-summary">
+        <div>
+          <CalendarIcon />
+          <span>
+            <small>行程长度</small>
+            {countTripDays(trip)} 天
+          </span>
+        </div>
+        <div>
+          <RouteIcon />
+          <span>
+            <small>默认交通</small>
+            {TRAVEL_MODE_LABELS[trip.defaultTravelMode]}
+          </span>
+        </div>
+        <div>
+          <span className="summary-number">{trip.items.length}</span>
+          <span>
+            <small>已录入安排</small>
+            时间表条目
+          </span>
+        </div>
+      </div>
+
+      <div className="detail-content">
+        <article className="schedule-shell">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">TIMELINE</p>
+              <h2>行程时间表</h2>
+            </div>
+            <span className="coming-badge">安排编辑 · 下一步</span>
+          </div>
+          <div className="schedule-empty">
+            <span className="schedule-empty-line" />
+            <span className="schedule-empty-time">--:--</span>
+            <div>
+              <h3>等待加入第一项安排</h3>
+              <p>下一阶段可在这里添加活动、交通、地点与备注。</p>
+            </div>
+          </div>
+        </article>
+
+        <aside className="trip-notes">
+          <p className="eyebrow">TRIP NOTES</p>
+          <h2>关于这趟旅行</h2>
+          <dl>
+            <div>
+              <dt>目的地</dt>
+              <dd>{trip.destination || '未填写'}</dd>
+            </div>
+            <div>
+              <dt>时区</dt>
+              <dd>{trip.timezone}</dd>
+            </div>
+            <div>
+              <dt>数据位置</dt>
+              <dd>仅当前浏览器</dd>
+            </div>
+          </dl>
+          <p className="notes-hint">
+            所有修改会立即自动保存。可从行程列表继续创建其他旅程。
+          </p>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function StorageUnavailable({ message }: { message: string }) {
+  return (
+    <main className="storage-screen">
+      <p className="eyebrow">LOCAL DATA</p>
+      <h1>无法读取本机数据</h1>
+      <p>{message}</p>
+      <p>为避免覆盖原有行程，当前不会自动清空或重建数据。</p>
+    </main>
+  )
 }
 
 function App() {
-  const storageStatus = getStorageStatus()
+  const { data, storageError, commit, dismissStorageError } = useTripData()
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null)
+  const [editor, setEditor] = useState<EditorState>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const selectedTrip = useMemo(
+    () =>
+      data && selectedTripId ? findTrip(data, selectedTripId) : undefined,
+    [data, selectedTripId],
+  )
+  const editingTrip =
+    data && editor && editor !== 'create'
+      ? findTrip(data, editor.tripId)
+      : undefined
+
+  const handleCreate = (input: TripMetadataInput): SaveResult => {
+    if (!data) {
+      return { ok: false, message: '本机数据尚未准备好' }
+    }
+
+    try {
+      const next = createTripInData(data, input)
+      const created = next.trips[next.trips.length - 1]
+
+      if (!commit(next)) {
+        return { ok: false, message: '浏览器存储写入失败，请检查可用空间' }
+      }
+
+      setSelectedTripId(created.id)
+      setEditor(null)
+      setActionError(null)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: describeError(error) }
+    }
+  }
+
+  const handleUpdate = (input: TripMetadataInput): SaveResult => {
+    if (!data || !editingTrip) {
+      return { ok: false, message: '找不到要编辑的行程' }
+    }
+
+    try {
+      const next = updateTripMetadataInData(data, editingTrip.id, input)
+
+      if (!commit(next)) {
+        return { ok: false, message: '浏览器存储写入失败，请检查可用空间' }
+      }
+
+      setEditor(null)
+      setActionError(null)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: describeError(error) }
+    }
+  }
+
+  const handleDuplicate = () => {
+    if (!data || !selectedTrip) {
+      return
+    }
+
+    try {
+      const result = duplicateTripInData(data, selectedTrip.id)
+
+      if (!commit(result.data)) {
+        setActionError('浏览器存储写入失败，未能复制行程')
+        return
+      }
+
+      setSelectedTripId(result.trip.id)
+      setActionError(null)
+    } catch (error) {
+      setActionError(describeError(error))
+    }
+  }
+
+  const handleDelete = () => {
+    if (!data || !selectedTrip) {
+      return
+    }
+
+    const confirmed = window.confirm(
+      `确认删除“${selectedTrip.title}”？删除后无法从本机恢复，但已导出的备份不受影响。`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const next = removeTripFromData(data, selectedTrip.id)
+
+      if (!commit(next)) {
+        setActionError('浏览器存储写入失败，未能删除行程')
+        return
+      }
+
+      setSelectedTripId(null)
+      setActionError(null)
+    } catch (error) {
+      setActionError(describeError(error))
+    }
+  }
 
   return (
     <div className="app-shell">
       <header className="site-header">
-        <a className="brand" href="/" aria-label="行程图首页">
+        <button
+          aria-label="返回行程列表"
+          className="brand"
+          onClick={() => setSelectedTripId(null)}
+          type="button"
+        >
           <span className="brand-mark">
             <PinIcon />
           </span>
           <span>行程图</span>
-        </a>
+        </button>
         <span className="local-badge">仅保存在本机</span>
       </header>
 
-      <main>
-        <section className="hero" aria-labelledby="hero-title">
-          <div className="hero-copy">
-            <p className="eyebrow">TRIP ITINERARY · 本地版</p>
-            <h1 id="hero-title">
-              把旅程，
-              <br />
-              排成一张看得懂的图。
-            </h1>
-            <p className="lead">
-              录入每天的时间与安排，自动整理成清晰的时间表。无需登录，行程只留在你的浏览器里。
-            </p>
-            <button className="primary-action" type="button" disabled>
-              开始规划
-              <ArrowIcon />
-            </button>
-            <p className="stage-note">下一阶段开放行程创建与编辑</p>
-          </div>
+      {!data ? (
+        <StorageUnavailable message={storageError ?? '本机存储格式异常'} />
+      ) : selectedTrip ? (
+        <DetailView
+          actionError={actionError}
+          onBack={() => setSelectedTripId(null)}
+          onDelete={handleDelete}
+          onDismissActionError={() => setActionError(null)}
+          onDuplicate={handleDuplicate}
+          onEdit={() => setEditor({ tripId: selectedTrip.id })}
+          trip={selectedTrip}
+        />
+      ) : (
+        <LibraryView
+          actionError={actionError}
+          data={data}
+          onDismissActionError={() => setActionError(null)}
+          onDismissStorageError={dismissStorageError}
+          onCreate={() => {
+            setActionError(null)
+            setEditor('create')
+          }}
+          onOpenTrip={(tripId) => {
+            setActionError(null)
+            setSelectedTripId(tripId)
+          }}
+          storageError={storageError}
+        />
+      )}
 
-          <div className="sample-card" aria-label="时间表样式预览">
-            <div className="sample-card-header">
-              <div>
-                <span className="sample-label">示例行程</span>
-                <h2>杭州 · 两日慢游</h2>
-              </div>
-              <span className="day-chip">DAY 01</span>
-            </div>
-            <div className="sample-rule" />
-            <ol className="sample-list">
-              <li>
-                <time>09:00</time>
-                <div>
-                  <strong>抵达西湖</strong>
-                  <span>湖滨码头</span>
-                </div>
-              </li>
-              <li>
-                <time>12:30</time>
-                <div>
-                  <strong>午餐</strong>
-                  <span>北山街</span>
-                </div>
-              </li>
-              <li>
-                <time>15:00</time>
-                <div>
-                  <strong>浙江省博物馆</strong>
-                  <span>孤山馆区</span>
-                </div>
-              </li>
-            </ol>
-          </div>
-        </section>
+      {data ? (
+        <footer>
+          <span>行程图 · V1 行程库</span>
+          <span data-testid="storage-status">
+            已保存 {data.trips.length} 个行程
+          </span>
+        </footer>
+      ) : null}
 
-        <section className="principles" aria-label="产品特点">
-          <article>
-            <span>01</span>
-            <h2>本地优先</h2>
-            <p>没有账号与云端同步，旅行安排只保存在当前浏览器。</p>
-          </article>
-          <article>
-            <span>02</span>
-            <h2>时间清楚</h2>
-            <p>按天分组、自动排序，并提醒相互重叠的日程。</p>
-          </article>
-          <article>
-            <span>03</span>
-            <h2>为地图留好接口</h2>
-            <p>地点与交通段从第一版开始建模，后续可接入动态地图。</p>
-          </article>
-        </section>
-      </main>
-
-      <footer>
-        <span>行程图 · V1 数据层</span>
-        <span data-testid="storage-status">{storageStatus}</span>
-      </footer>
+      {editor ? (
+        <TripForm
+          initialTrip={editor === 'create' ? undefined : editingTrip}
+          key={editor === 'create' ? 'create' : editor.tripId}
+          onCancel={() => setEditor(null)}
+          onSubmit={editor === 'create' ? handleCreate : handleUpdate}
+        />
+      ) : null}
     </div>
   )
 }
