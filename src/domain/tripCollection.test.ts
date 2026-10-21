@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { createActivityItem, createEmptyAppData, createTrip } from './trip'
+import {
+  createActivityItem,
+  createEmptyAppData,
+  createTransportItem,
+  createTrip,
+} from './trip'
 import {
   addTripToData,
+  addScheduleItemInData,
   createTripInData,
   duplicateTripInData,
   findTrip,
+  findOverlappingScheduleItemIds,
+  listTripDates,
+  removeScheduleItemInData,
   removeTripFromData,
   sortTripsForDisplay,
   updateTripMetadataInData,
+  updateScheduleItemInData,
 } from './tripCollection'
 
 const metadata = {
@@ -97,5 +107,109 @@ describe('行程库操作', () => {
     expect(sortTripsForDisplay([later, earlier]).map((trip) => trip.title)).toEqual(
       ['较早', '较晚'],
     )
+  })
+
+  it('添加、修改和删除行程安排', () => {
+    const initial = createTripInData(createEmptyAppData(), metadata)
+    const tripId = initial.trips[0].id
+    const activity = createActivityItem({
+      title: '游湖',
+      date: '2026-10-24',
+      startTime: '09:00',
+      endTime: '10:30',
+    })
+    const added = addScheduleItemInData(initial, tripId, activity)
+    const updated = updateScheduleItemInData(added, tripId, {
+      ...activity,
+      title: '慢游西湖',
+    })
+    const removed = removeScheduleItemInData(updated, tripId, activity.id)
+
+    expect(added.trips[0].items).toHaveLength(1)
+    expect(updated.trips[0].items[0].title).toBe('慢游西湖')
+    expect(removed.trips[0].items).toHaveLength(0)
+  })
+
+  it('标记所有时间重叠的安排，但不把首尾相接算作冲突', () => {
+    const trip = createTrip(metadata)
+    const first = createActivityItem({
+      id: 'first',
+      title: '第一项',
+      date: '2026-10-24',
+      startTime: '09:00',
+      endTime: '10:00',
+    })
+    const second = createActivityItem({
+      id: 'second',
+      title: '重叠项',
+      date: '2026-10-24',
+      startTime: '09:30',
+      endTime: '10:30',
+    })
+    const adjacent = createActivityItem({
+      id: 'adjacent',
+      title: '紧接项',
+      date: '2026-10-24',
+      startTime: '10:30',
+      endTime: '11:30',
+    })
+    const overlapping = findOverlappingScheduleItemIds({
+      ...trip,
+      items: [first, second, adjacent],
+    })
+
+    expect(overlapping).toEqual(new Set(['first', 'second']))
+  })
+
+  it('跨日交通可以和第二天的安排产生冲突', () => {
+    const trip = createTrip({
+      ...metadata,
+      startDate: '2026-10-24',
+      endDate: '2026-10-25',
+    })
+    const overnightTransport = createTransportItem({
+      id: 'overnight',
+      title: '夜间列车',
+      date: '2026-10-24',
+      endDate: '2026-10-25',
+      startTime: '23:00',
+      endTime: '06:30',
+      mode: 'transit',
+      from: {
+        id: crypto.randomUUID(),
+        name: '杭州东站',
+      },
+      to: {
+        id: crypto.randomUUID(),
+        name: '南京南站',
+      },
+    })
+    const earlyActivity = createActivityItem({
+      id: 'early',
+      title: '过早安排',
+      date: '2026-10-25',
+      startTime: '05:30',
+      endTime: '07:00',
+    })
+    const overlapping = findOverlappingScheduleItemIds({
+      ...trip,
+      items: [overnightTransport, earlyActivity],
+    })
+
+    expect(overlapping).toEqual(new Set(['overnight', 'early']))
+  })
+
+  it('列出多日行程中的每一天', () => {
+    const trip = createTrip({
+      ...metadata,
+      startDate: '2026-10-24',
+      endDate: '2026-10-26',
+    })
+
+    expect(listTripDates(trip)).toEqual([
+      '2026-10-24',
+      '2026-10-25',
+      '2026-10-26',
+    ])
   })
 })

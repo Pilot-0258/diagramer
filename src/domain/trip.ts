@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const APP_DATA_SCHEMA_VERSION = 1 as const
+export const APP_DATA_SCHEMA_VERSION = 2 as const
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit', 'riding'] as const
 export const TRAVEL_MODE_LABELS = {
@@ -62,7 +62,7 @@ const scheduleBaseShape = {
   notes: optionalTextSchema(2000),
 }
 
-function validateTimeRange(
+function validateActivityTimeRange(
   value: { startTime: string; endTime: string },
   context: z.RefinementCtx,
 ) {
@@ -70,7 +70,7 @@ function validateTimeRange(
     context.addIssue({
       code: 'custom',
       path: ['endTime'],
-      message: '结束时间必须晚于开始时间，暂不支持跨午夜事件',
+      message: '活动结束时间必须晚于开始时间',
     })
   }
 }
@@ -81,17 +81,38 @@ export const ActivityItemSchema = z
     type: z.literal('activity'),
     location: PlaceRefSchema.optional(),
   })
-  .superRefine(validateTimeRange)
+  .superRefine(validateActivityTimeRange)
 
 export const TransportItemSchema = z
   .object({
     ...scheduleBaseShape,
     type: z.literal('transport'),
+    endDate: dateSchema,
     mode: TravelModeSchema,
     from: PlaceRefSchema,
     to: PlaceRefSchema,
   })
-  .superRefine(validateTimeRange)
+  .superRefine((transport, context) => {
+    if (transport.endDate < transport.date) {
+      context.addIssue({
+        code: 'custom',
+        path: ['endDate'],
+        message: '交通结束日期不能早于开始日期',
+      })
+      return
+    }
+
+    if (
+      transport.endDate === transport.date &&
+      transport.endTime <= transport.startTime
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['endTime'],
+        message: '如果交通当天结束，结束时间必须晚于开始时间',
+      })
+    }
+  })
 
 export const ScheduleItemSchema = z.discriminatedUnion('type', [
   ActivityItemSchema,
@@ -137,6 +158,17 @@ export const TripSchema = z
           code: 'custom',
           path: ['items', index, 'date'],
           message: '安排日期必须位于行程日期范围内',
+        })
+      }
+
+      if (
+        item.type === 'transport' &&
+        item.endDate > trip.endDate
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', index, 'endDate'],
+          message: '交通结束日期必须位于行程日期范围内',
         })
       }
     })

@@ -2,18 +2,32 @@ import { useMemo, useState } from 'react'
 import { ZodError } from 'zod'
 import {
   TRAVEL_MODE_LABELS,
+  createActivityItem,
+  createTransportItem,
   type AppData,
+  type PlaceRef,
+  type ScheduleItem,
   type Trip,
 } from './domain/trip'
 import {
+  addScheduleItemInData,
   createTripInData,
   duplicateTripInData,
   findTrip,
+  findOverlappingScheduleItemIds,
+  listTripDates,
+  removeScheduleItemInData,
   removeTripFromData,
+  sortScheduleItemsForDisplay,
   sortTripsForDisplay,
   updateTripMetadataInData,
+  updateScheduleItemInData,
   type TripMetadataInput,
 } from './domain/tripCollection'
+import {
+  ScheduleItemForm,
+  type ScheduleItemDraft,
+} from './features/trips/ScheduleItemForm'
 import { TripForm } from './features/trips/TripForm'
 import { useTripData } from './features/trips/useTripData'
 
@@ -27,6 +41,7 @@ type SaveResult =
     }
 
 type EditorState = 'create' | { tripId: string } | null
+type ScheduleEditorState = 'create' | { itemId: string } | null
 
 const ArrowIcon = () => (
   <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
@@ -79,12 +94,100 @@ function countTripDays(trip: Trip) {
   return Math.floor((end - start) / 86_400_000) + 1
 }
 
+function formatScheduleDate(date: string) {
+  const parsed = new Date(`${date}T00:00:00.000Z`)
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return `${parsed.getUTCMonth() + 1} 月 ${parsed.getUTCDate()} 日 · ${weekdays[parsed.getUTCDay()]}`
+}
+
+function formatScheduleEnd(endDate: string, startDate: string) {
+  const end = new Date(`${endDate}T00:00:00.000Z`)
+  const start = new Date(`${startDate}T00:00:00.000Z`)
+  const dayDifference = Math.round(
+    (end.getTime() - start.getTime()) / 86_400_000,
+  )
+
+  if (dayDifference === 1) {
+    return '次日'
+  }
+
+  return `${end.getUTCMonth() + 1}/${end.getUTCDate()}`
+}
+
 function describeError(error: unknown) {
   if (error instanceof ZodError) {
     return error.issues[0]?.message ?? '行程数据格式不正确'
   }
 
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
+}
+
+function buildPlace(
+  name: string | undefined,
+  address: string | undefined,
+  existing?: PlaceRef,
+) {
+  const trimmedName = name?.trim()
+
+  if (!trimmedName) {
+    return undefined
+  }
+
+  return {
+    ...existing,
+    id: existing?.id ?? crypto.randomUUID(),
+    name: trimmedName,
+    address: address?.trim() || undefined,
+  } satisfies PlaceRef
+}
+
+function buildScheduleItem(
+  draft: ScheduleItemDraft,
+  existing?: ScheduleItem,
+): ScheduleItem {
+  const common = {
+    id: existing?.id,
+    title: draft.title,
+    date: draft.date,
+    startTime: draft.startTime,
+    endTime: draft.endTime,
+    notes: draft.notes,
+  }
+
+  if (draft.type === 'transport') {
+    const transport =
+      existing?.type === 'transport' ? existing : undefined
+    const from = buildPlace(
+      draft.fromName,
+      draft.fromAddress,
+      transport?.from,
+    )
+    const to = buildPlace(draft.toName, draft.toAddress, transport?.to)
+
+    if (!from || !to || !draft.mode) {
+      throw new Error('交通安排需要填写起点、终点和交通方式')
+    }
+
+    return createTransportItem({
+      ...common,
+      endDate: draft.endDate,
+      mode: draft.mode,
+      from,
+      to,
+    })
+  }
+
+  const activity = existing?.type === 'activity' ? existing : undefined
+  const location = buildPlace(
+    draft.locationName,
+    draft.locationAddress,
+    activity?.location,
+  )
+
+  return createActivityItem({
+    ...common,
+    location,
+  })
 }
 
 function TripCard({
@@ -217,12 +320,73 @@ function LibraryView({
   )
 }
 
+function ScheduleRow({
+  item,
+  hasConflict,
+  onEdit,
+  onDelete,
+}: {
+  item: ScheduleItem
+  hasConflict: boolean
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const isCrossDay =
+    item.type === 'transport' && item.endDate !== item.date
+  const detail =
+    item.type === 'transport'
+      ? `${TRAVEL_MODE_LABELS[item.mode]} · ${item.from.name} → ${item.to.name}`
+      : item.location?.name || '未填写地点'
+
+  return (
+    <article
+      className={`schedule-item${hasConflict ? ' has-conflict' : ''}`}
+    >
+      <div className="schedule-item-time">
+        <strong>{item.startTime}</strong>
+        <span>
+          {item.type === 'transport' && isCrossDay
+            ? `${formatScheduleEnd(item.endDate, item.date)} ${item.endTime}`
+            : item.endTime}
+        </span>
+      </div>
+      <div className="schedule-item-body">
+        <div className="schedule-item-topline">
+          <span
+            className={`item-kind ${
+              item.type === 'transport' ? 'item-kind-transport' : ''
+            }`}
+          >
+            {item.type === 'transport' ? '交通' : '活动'}
+          </span>
+          {isCrossDay ? <span className="cross-day-label">跨日</span> : null}
+          {hasConflict ? <span className="conflict-label">时间重叠</span> : null}
+        </div>
+        <h3>{item.title}</h3>
+        <p>{detail}</p>
+        {item.notes ? <p className="item-notes">{item.notes}</p> : null}
+      </div>
+      <div className="schedule-item-actions">
+        <button onClick={onEdit} type="button">
+          编辑
+        </button>
+        <button className="danger-text" onClick={onDelete} type="button">
+          删除
+        </button>
+      </div>
+    </article>
+  )
+}
+
 function DetailView({
   trip,
   onBack,
   onEdit,
   onDuplicate,
   onDelete,
+  onAddItem,
+  onEditItem,
+  onDeleteItem,
   actionError,
   onDismissActionError,
 }: {
@@ -231,9 +395,15 @@ function DetailView({
   onEdit: () => void
   onDuplicate: () => void
   onDelete: () => void
+  onAddItem: () => void
+  onEditItem: (item: ScheduleItem) => void
+  onDeleteItem: (item: ScheduleItem) => void
   actionError: string | null
   onDismissActionError: () => void
 }) {
+  const dates = listTripDates(trip)
+  const overlappingIds = findOverlappingScheduleItemIds(trip)
+
   return (
     <section className="trip-detail" aria-labelledby="trip-title">
       <button className="back-button" onClick={onBack} type="button">
@@ -312,15 +482,59 @@ function DetailView({
               <p className="eyebrow">TIMELINE</p>
               <h2>行程时间表</h2>
             </div>
-            <span className="coming-badge">安排编辑 · 下一步</span>
+            <button className="add-item-button" onClick={onAddItem} type="button">
+              <PlusIcon />
+              添加安排
+            </button>
           </div>
-          <div className="schedule-empty">
-            <span className="schedule-empty-line" />
-            <span className="schedule-empty-time">--:--</span>
-            <div>
-              <h3>等待加入第一项安排</h3>
-              <p>下一阶段可在这里添加活动、交通、地点与备注。</p>
+
+          {overlappingIds.size > 0 ? (
+            <div className="conflict-summary" role="status">
+              <span className="conflict-mark">!</span>
+              <div>
+                <strong>
+                  发现 {overlappingIds.size} 项时间重叠的安排
+                </strong>
+                <p>安排已保留，请检查起止时间是否需要调整。</p>
+              </div>
             </div>
+          ) : null}
+
+          <div className="schedule-days">
+            {dates.map((date, dateIndex) => {
+              const items = sortScheduleItemsForDisplay(
+                trip.items.filter((item) => item.date === date),
+              )
+
+              return (
+                <section className="schedule-day" key={date}>
+                  <header className="day-heading">
+                    <div>
+                      <span className="day-number">
+                        DAY {String(dateIndex + 1).padStart(2, '0')}
+                      </span>
+                      <h3>{formatScheduleDate(date)}</h3>
+                    </div>
+                    <span className="day-count">{items.length} 项</span>
+                  </header>
+                  <div className="day-items">
+                    {items.length === 0 ? (
+                      <p className="empty-day">这一天还没有安排</p>
+                    ) : (
+                      items.map((item) => (
+                        <ScheduleRow
+                          hasConflict={overlappingIds.has(item.id)}
+                          item={item}
+                          key={item.id}
+                          onDelete={() => onDeleteItem(item)}
+                          onEdit={() => onEditItem(item)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </section>
+              )
+            })}
           </div>
         </article>
 
@@ -342,7 +556,7 @@ function DetailView({
             </div>
           </dl>
           <p className="notes-hint">
-            所有修改会立即自动保存。可从行程列表继续创建其他旅程。
+            所有修改会立即自动保存。活动地点与交通起终点会保留在数据中，供后续地图功能使用。
           </p>
         </aside>
       </div>
@@ -365,6 +579,8 @@ function App() {
   const { data, storageError, commit, dismissStorageError } = useTripData()
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null)
   const [editor, setEditor] = useState<EditorState>(null)
+  const [scheduleEditor, setScheduleEditor] =
+    useState<ScheduleEditorState>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const selectedTrip = useMemo(
@@ -375,6 +591,10 @@ function App() {
   const editingTrip =
     data && editor && editor !== 'create'
       ? findTrip(data, editor.tripId)
+      : undefined
+  const editingScheduleItem =
+    selectedTrip && scheduleEditor && scheduleEditor !== 'create'
+      ? selectedTrip.items.find((item) => item.id === scheduleEditor.itemId)
       : undefined
 
   const handleCreate = (input: TripMetadataInput): SaveResult => {
@@ -392,6 +612,7 @@ function App() {
 
       setSelectedTripId(created.id)
       setEditor(null)
+      setScheduleEditor(null)
       setActionError(null)
       return { ok: true }
     } catch (error) {
@@ -412,6 +633,7 @@ function App() {
       }
 
       setEditor(null)
+      setScheduleEditor(null)
       setActionError(null)
       return { ok: true }
     } catch (error) {
@@ -433,6 +655,7 @@ function App() {
       }
 
       setSelectedTripId(result.trip.id)
+      setScheduleEditor(null)
       setActionError(null)
     } catch (error) {
       setActionError(describeError(error))
@@ -461,6 +684,80 @@ function App() {
       }
 
       setSelectedTripId(null)
+      setScheduleEditor(null)
+      setActionError(null)
+    } catch (error) {
+      setActionError(describeError(error))
+    }
+  }
+
+  const handleAddSchedule = (draft: ScheduleItemDraft): SaveResult => {
+    if (!data || !selectedTrip) {
+      return { ok: false, message: '找不到要添加安排的行程' }
+    }
+
+    try {
+      const item = buildScheduleItem(draft)
+      const next = addScheduleItemInData(data, selectedTrip.id, item)
+
+      if (!commit(next)) {
+        return { ok: false, message: '浏览器存储写入失败，请检查可用空间' }
+      }
+
+      setScheduleEditor(null)
+      setActionError(null)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: describeError(error) }
+    }
+  }
+
+  const handleUpdateSchedule = (draft: ScheduleItemDraft): SaveResult => {
+    if (!data || !selectedTrip || !editingScheduleItem) {
+      return { ok: false, message: '找不到要编辑的安排' }
+    }
+
+    try {
+      const item = buildScheduleItem(draft, editingScheduleItem)
+      const next = updateScheduleItemInData(data, selectedTrip.id, item)
+
+      if (!commit(next)) {
+        return { ok: false, message: '浏览器存储写入失败，请检查可用空间' }
+      }
+
+      setScheduleEditor(null)
+      setActionError(null)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: describeError(error) }
+    }
+  }
+
+  const handleDeleteSchedule = (item: ScheduleItem) => {
+    if (!data || !selectedTrip) {
+      return
+    }
+
+    const confirmed = window.confirm(
+      `确认删除安排“${item.title}”？删除后无法从本机恢复。`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const next = removeScheduleItemInData(
+        data,
+        selectedTrip.id,
+        item.id,
+      )
+
+      if (!commit(next)) {
+        setActionError('浏览器存储写入失败，未能删除安排')
+        return
+      }
+
       setActionError(null)
     } catch (error) {
       setActionError(describeError(error))
@@ -473,7 +770,10 @@ function App() {
         <button
           aria-label="返回行程列表"
           className="brand"
-          onClick={() => setSelectedTripId(null)}
+          onClick={() => {
+            setSelectedTripId(null)
+            setScheduleEditor(null)
+          }}
           type="button"
         >
           <span className="brand-mark">
@@ -489,11 +789,28 @@ function App() {
       ) : selectedTrip ? (
         <DetailView
           actionError={actionError}
-          onBack={() => setSelectedTripId(null)}
+          onAddItem={() => {
+            setActionError(null)
+            setEditor(null)
+            setScheduleEditor('create')
+          }}
+          onBack={() => {
+            setSelectedTripId(null)
+            setScheduleEditor(null)
+          }}
           onDelete={handleDelete}
+          onDeleteItem={handleDeleteSchedule}
           onDismissActionError={() => setActionError(null)}
           onDuplicate={handleDuplicate}
-          onEdit={() => setEditor({ tripId: selectedTrip.id })}
+          onEdit={() => {
+            setScheduleEditor(null)
+            setEditor({ tripId: selectedTrip.id })
+          }}
+          onEditItem={(item) => {
+            setActionError(null)
+            setEditor(null)
+            setScheduleEditor({ itemId: item.id })
+          }}
           trip={selectedTrip}
         />
       ) : (
@@ -504,10 +821,12 @@ function App() {
           onDismissStorageError={dismissStorageError}
           onCreate={() => {
             setActionError(null)
+            setScheduleEditor(null)
             setEditor('create')
           }}
           onOpenTrip={(tripId) => {
             setActionError(null)
+            setScheduleEditor(null)
             setSelectedTripId(tripId)
           }}
           storageError={storageError}
@@ -516,7 +835,7 @@ function App() {
 
       {data ? (
         <footer>
-          <span>行程图 · V1 行程库</span>
+          <span>行程图 · V1 时间表</span>
           <span data-testid="storage-status">
             已保存 {data.trips.length} 个行程
           </span>
@@ -529,6 +848,24 @@ function App() {
           key={editor === 'create' ? 'create' : editor.tripId}
           onCancel={() => setEditor(null)}
           onSubmit={editor === 'create' ? handleCreate : handleUpdate}
+        />
+      ) : null}
+
+      {selectedTrip && scheduleEditor ? (
+        <ScheduleItemForm
+          initialItem={
+            scheduleEditor === 'create' ? undefined : editingScheduleItem
+          }
+          key={
+            scheduleEditor === 'create' ? 'create' : scheduleEditor.itemId
+          }
+          onCancel={() => setScheduleEditor(null)}
+          onSubmit={
+            scheduleEditor === 'create'
+              ? handleAddSchedule
+              : handleUpdateSchedule
+          }
+          trip={selectedTrip}
         />
       ) : null}
     </div>

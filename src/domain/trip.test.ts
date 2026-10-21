@@ -82,6 +82,7 @@ describe('行程数据校验', () => {
     const transport = createTransportItem({
       title: '步行到午餐',
       date: '2026-10-24',
+      endDate: '2026-10-24',
       startTime: '11:00',
       endTime: '11:20',
       mode: 'walk',
@@ -100,6 +101,58 @@ describe('行程数据校验', () => {
     }
 
     expect(TripSchema.safeParse(completeTrip).success).toBe(true)
+  })
+
+  it('允许交通跨日并校验结束日期', () => {
+    const trip = createTrip({
+      title: '跨日交通',
+      startDate: '2026-10-24',
+      endDate: '2026-10-25',
+    })
+    const transport = createTransportItem({
+      title: '夜间列车',
+      date: '2026-10-24',
+      endDate: '2026-10-25',
+      startTime: '23:00',
+      endTime: '06:30',
+      mode: 'transit',
+      from: {
+        id: crypto.randomUUID(),
+        name: '杭州东站',
+      },
+      to: {
+        id: crypto.randomUUID(),
+        name: '南京南站',
+      },
+    })
+
+    expect(
+      TripSchema.safeParse({
+        ...trip,
+        items: [transport],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('拒绝结束日期早于开始日期的交通', () => {
+    expect(() =>
+      createTransportItem({
+        title: '错误交通',
+        date: '2026-10-25',
+        endDate: '2026-10-24',
+        startTime: '12:00',
+        endTime: '13:00',
+        mode: 'drive',
+        from: {
+          id: crypto.randomUUID(),
+          name: '甲地',
+        },
+        to: {
+          id: crypto.randomUUID(),
+          name: '乙地',
+        },
+      }),
+    ).toThrow()
   })
 
   it('拒绝落在行程日期范围外的安排', () => {
@@ -130,7 +183,7 @@ describe('行程数据校验', () => {
       endDate: '2026-10-24',
     })
     const result = AppDataSchema.safeParse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       trips: [trip, trip],
     })
 

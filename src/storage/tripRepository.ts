@@ -39,9 +39,49 @@ const VersionProbeSchema = z.object({
   schemaVersion: z.number().int().nonnegative(),
 })
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function migrateV1ToV2(input: unknown) {
+  if (!isRecord(input) || !Array.isArray(input.trips)) {
+    return input
+  }
+
+  return {
+    ...input,
+    schemaVersion: 2,
+    trips: input.trips.map((trip) => {
+      if (!isRecord(trip) || !Array.isArray(trip.items)) {
+        return trip
+      }
+
+      return {
+        ...trip,
+        items: trip.items.map((item) => {
+          if (
+            isRecord(item) &&
+            item.type === 'transport' &&
+            typeof item.date === 'string'
+          ) {
+            return {
+              ...item,
+              endDate: item.date,
+            }
+          }
+
+          return item
+        }),
+      }
+    }),
+  }
+}
+
 const migrations: Readonly<
   Partial<Record<number, (input: unknown) => unknown>>
-> = {}
+> = {
+  1: migrateV1ToV2,
+}
 
 function fail(
   code: StorageErrorCode,
@@ -93,7 +133,13 @@ function migrateAppData(raw: unknown): StorageResult<unknown> {
       return fail('invalid-data', '数据迁移后缺少有效的 schemaVersion')
     }
 
-    version = nextProbe.data.schemaVersion
+    const nextVersion = nextProbe.data.schemaVersion
+
+    if (nextVersion <= version) {
+      return fail('invalid-data', '数据迁移没有推进 schemaVersion')
+    }
+
+    version = nextVersion
   }
 
   if (version > APP_DATA_SCHEMA_VERSION) {
@@ -152,6 +198,20 @@ export class TripRepository {
         'invalid-data',
         `本地数据格式不正确：${formatValidationIssues(validated.error)}`,
       )
+    }
+
+    if (
+      isRecord(parsed) &&
+      parsed.schemaVersion !== APP_DATA_SCHEMA_VERSION
+    ) {
+      try {
+        this.storage.setItem(
+          this.storageKey,
+          JSON.stringify(validated.data),
+        )
+      } catch {
+        // The migrated data can still be used for this session.
+      }
     }
 
     return {

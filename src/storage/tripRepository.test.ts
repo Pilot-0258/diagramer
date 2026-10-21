@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createEmptyAppData, createTrip } from '../domain/trip'
+import {
+  APP_DATA_SCHEMA_VERSION,
+  createEmptyAppData,
+  createTransportItem,
+  createTrip,
+} from '../domain/trip'
 import {
   APP_DATA_STORAGE_KEY,
   TripRepository,
@@ -49,7 +54,7 @@ describe('本地行程存储', () => {
       endDate: '2026-11-02',
     })
     const data = {
-      schemaVersion: 1 as const,
+      schemaVersion: APP_DATA_SCHEMA_VERSION,
       trips: [trip],
     }
 
@@ -106,7 +111,10 @@ describe('本地行程存储', () => {
     const storage = new MemoryStorage()
     storage.setItem(
       APP_DATA_STORAGE_KEY,
-      JSON.stringify({ schemaVersion: 1, trips: 'not-an-array' }),
+      JSON.stringify({
+        schemaVersion: APP_DATA_SCHEMA_VERSION,
+        trips: 'not-an-array',
+      }),
     )
     const result = new TripRepository(storage).load()
 
@@ -114,6 +122,58 @@ describe('本地行程存储', () => {
     if (!result.ok) {
       expect(result.error.code).toBe('invalid-data')
     }
+  })
+
+  it('将版本 1 数据迁移为带交通结束日期的版本 2', () => {
+    const storage = new MemoryStorage()
+    const trip = createTrip({
+      title: '旧版行程',
+      startDate: '2026-10-24',
+      endDate: '2026-10-25',
+    })
+    const transport = createTransportItem({
+      title: '夜间列车',
+      date: '2026-10-24',
+      endDate: '2026-10-25',
+      startTime: '23:00',
+      endTime: '23:30',
+      mode: 'transit',
+      from: {
+        id: crypto.randomUUID(),
+        name: '杭州',
+      },
+      to: {
+        id: crypto.randomUUID(),
+        name: '南京',
+      },
+    })
+    storage.setItem(
+      APP_DATA_STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 1,
+        trips: [
+          {
+            ...trip,
+            items: [{ ...transport, endDate: undefined }],
+          },
+        ],
+      }),
+    )
+
+    const result = new TripRepository(storage).load()
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const migratedTransport = result.value.trips[0].items[0]
+      expect(result.value.schemaVersion).toBe(2)
+      expect(migratedTransport.type).toBe('transport')
+      if (migratedTransport.type === 'transport') {
+        expect(migratedTransport.endDate).toBe('2026-10-24')
+      }
+    }
+
+    const persisted = JSON.parse(storage.getItem(APP_DATA_STORAGE_KEY) ?? '{}')
+    expect(persisted.schemaVersion).toBe(2)
   })
 
   it('在浏览器拒绝读取或写入时返回可处理错误', () => {

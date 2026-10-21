@@ -74,6 +74,144 @@ export function updateTripMetadataInData(
   })
 }
 
+function replaceTripItems(
+  data: AppData,
+  tripId: string,
+  items: ScheduleItem[],
+): AppData {
+  const trip = findTrip(data, tripId)
+
+  if (!trip) {
+    throw new Error('找不到要修改的行程')
+  }
+
+  const updated = TripSchema.parse({
+    ...trip,
+    items,
+    updatedAt: new Date().toISOString(),
+  })
+
+  return AppDataSchema.parse({
+    ...data,
+    trips: data.trips.map((candidate) =>
+      candidate.id === tripId ? updated : candidate,
+    ),
+  })
+}
+
+export function addScheduleItemInData(
+  data: AppData,
+  tripId: string,
+  item: ScheduleItem,
+): AppData {
+  const trip = findTrip(data, tripId)
+
+  if (!trip) {
+    throw new Error('找不到要添加安排的行程')
+  }
+
+  return replaceTripItems(data, tripId, [...trip.items, item])
+}
+
+export function updateScheduleItemInData(
+  data: AppData,
+  tripId: string,
+  item: ScheduleItem,
+): AppData {
+  const trip = findTrip(data, tripId)
+
+  if (!trip) {
+    throw new Error('找不到要修改安排的行程')
+  }
+
+  if (!trip.items.some((candidate) => candidate.id === item.id)) {
+    throw new Error('找不到要修改的安排')
+  }
+
+  return replaceTripItems(
+    data,
+    tripId,
+    trip.items.map((candidate) =>
+      candidate.id === item.id ? item : candidate,
+    ),
+  )
+}
+
+export function removeScheduleItemInData(
+  data: AppData,
+  tripId: string,
+  itemId: string,
+): AppData {
+  const trip = findTrip(data, tripId)
+
+  if (!trip) {
+    throw new Error('找不到要修改安排的行程')
+  }
+
+  return replaceTripItems(
+    data,
+    tripId,
+    trip.items.filter((item) => item.id !== itemId),
+  )
+}
+
+export function sortScheduleItemsForDisplay(items: ScheduleItem[]) {
+  return [...items].sort((left, right) => {
+    const leftKey = `${left.date}T${left.startTime}`
+    const rightKey = `${right.date}T${right.startTime}`
+    return leftKey.localeCompare(rightKey)
+  })
+}
+
+export function listTripDates(trip: Trip) {
+  const dates: string[] = []
+  const cursor = new Date(`${trip.startDate}T00:00:00.000Z`)
+  const end = new Date(`${trip.endDate}T00:00:00.000Z`)
+
+  while (cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+
+  return dates
+}
+
+export function findOverlappingScheduleItemIds(trip: Trip) {
+  const overlapping = new Set<string>()
+  const sorted = sortScheduleItemsForDisplay(trip.items)
+
+  const toMinute = (date: string, time: string) =>
+    Date.parse(`${date}T${time}:00.000Z`) / 60_000
+
+  for (let leftIndex = 0; leftIndex < sorted.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < sorted.length;
+      rightIndex += 1
+    ) {
+      const left = sorted[leftIndex]
+      const right = sorted[rightIndex]
+      const leftStart = toMinute(left.date, left.startTime)
+      const leftEnd = toMinute(
+        left.type === 'transport' ? left.endDate : left.date,
+        left.endTime,
+      )
+      const rightStart = toMinute(right.date, right.startTime)
+      const rightEnd = toMinute(
+        right.type === 'transport' ? right.endDate : right.date,
+        right.endTime,
+      )
+
+      if (leftStart < rightEnd && rightStart < leftEnd) {
+        overlapping.add(left.id)
+        overlapping.add(right.id)
+      }
+    }
+  }
+
+  return overlapping
+}
+
 export function removeTripFromData(data: AppData, tripId: string): AppData {
   return AppDataSchema.parse({
     ...data,
